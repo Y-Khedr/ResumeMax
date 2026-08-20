@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="theme-init.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="ResumeMax — see the exact diff between your resume and a job posting, with AI-powered rewrites and a readiness roadmap." />
+<title>ResumeMax — know what your resume is missing</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+<!-- OpenGraph / social preview cards (LinkedIn, Twitter, Slack, etc.) -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="ResumeMax — know what your resume is missing" />
+<meta property="og:description" content="See the exact diff between your resume and a job posting, with AI-powered rewrites and a readiness roadmap." />
+<meta property="og:image" content="og-preview.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="ResumeMax — know what your resume is missing" />
+<meta name="twitter:description" content="See the exact diff between your resume and a job posting, with AI-powered rewrites and a readiness roadmap." />
+<meta name="twitter:image" content="og-preview.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="noise-overlay" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">&gt;_</span>
+      <span class="brand-name">Resume<span class="brand-accent">Max</span></span>
+    </div>
+    <div class="topbar-right">
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch between dark and light mode">
+        <span class="theme-toggle-icon" id="theme-toggle-icon">🌙</span>
+      </button>
+      <a href="#app" class="topbar-cta">Run a scan</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">$ resumemax --resume --job</p>
+        <h1>Know exactly what<br>your resume is<br><span class="hero-accent">missing.</span></h1>
+        <p class="hero-sub">
+          Paste a job posting, upload your resume, and see the gap as a
+          real diff — what matches, what's missing, and the exact bullet
+          rewrites to close it.
+        </p>
+        <a href="#app" class="btn btn-primary">Run a scan <span aria-hidden="true">→</span></a>
+      </div>
+
+      <div class="hero-visual">
+        <div class="terminal-card" id="hero-terminal">
+          <div class="terminal-titlebar" aria-hidden="true">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span class="terminal-filename">gap_report.diff</span>
+          </div>
+          <div class="terminal-body" id="hero-diff-lines" aria-hidden="true">
+            <!-- populated by JS, staggered fade-in — purely decorative demo content -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ APP ============ -->
+  <section id="app" class="app-section">
+    <div class="section-head">
+      <p class="eyebrow">01 · inputs</p>
+      <h2>Feed it a resume and a target role.</h2>
+    </div>
+
+    <div class="input-grid">
+      <div class="panel" id="resume-panel">
+        <div class="panel-label" id="resume-panel-label">Resume</div>
+        <label class="dropzone" id="dropzone" for="resume-input" tabindex="0" role="button"
+               aria-describedby="dropzone-content">
+          <input type="file" id="resume-input" accept="application/pdf" hidden />
+          <div class="dropzone-content" id="dropzone-content">
+            <span class="dropzone-icon" aria-hidden="true">↑</span>
+            <span class="dropzone-text">Drop a PDF here, or click to choose</span>
+            <span class="dropzone-hint">.pdf · up to 15MB</span>
+          </div>
+          <div class="scan-sweep" id="scan-sweep" aria-hidden="true">
+            <span class="scan-sweep-line"></span>
+            <span class="scan-sweep-glass">🔍</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="panel">
+        <div class="panel-label" id="job-input-label">Job posting</div>
+        <textarea id="job-input" aria-labelledby="job-input-label" placeholder="Paste the job description here…"></textarea>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <label class="toggle">
+        <input type="checkbox" id="ocr-toggle" checked />
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label">OCR fallback for scanned PDFs</span>
+      </label>
+
+      <input type="text" id="job-title-input" class="job-title-input" aria-label="Job title, for the report" placeholder="Job title (for the report)" value="Target Role" />
+
+      <button class="btn btn-primary btn-scan" id="scan-btn">
+        <span id="scan-btn-text">Run scan</span>
+      </button>
+    </div>
+
+    <p class="error-line" id="error-line" role="alert" hidden></p>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section class="results-section" id="results-section" hidden>
+    <div class="section-head">
+      <p class="eyebrow">02 · scan result</p>
+      <h2 id="results-heading">Here's the gap.</h2>
+    </div>
+
+    <div class="results-grid">
+      <div class="score-card">
+        <div class="score-ring-wrap">
+          <svg class="score-ring" viewBox="0 0 160 160" width="180" height="180" aria-hidden="true">
+            <circle class="score-ring-track" cx="80" cy="80" r="70" />
+            <circle class="score-ring-fill" id="score-ring-fill" cx="80" cy="80" r="70" />
+          </svg>
+          <div class="score-readout">
+            <span class="score-number" id="score-number">0</span><span class="score-percent">%</span>
+            <span class="score-caption">match</span>
+          </div>
+        </div>
+        <p class="score-note" id="score-note" aria-live="polite"></p>
+      </div>
+
+      <div class="diff-card">
+        <div class="diff-column">
+          <div class="diff-col-label diff-col-label--matched"># matched — <span id="matched-count">0</span></div>
+          <div class="diff-lines" id="matched-lines"></div>
+        </div>
+        <div class="diff-column">
+          <div class="diff-col-label diff-col-label--missing"># missing — <span id="missing-count">0</span></div>
+          <div class="diff-lines" id="missing-lines"></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="extraction-note" id="extraction-note" hidden></p>
+
+    <!-- ============ AI SECTION ============ -->
+    <div class="section-head section-head--tight">
+      <p class="eyebrow">03 · rewrites</p>
+      <h2>What to change, line by line.</h2>
+    </div>
+
+    <div id="ai-panel">
+      <div class="ai-loading" id="ai-loading">
+        <div class="ai-loading-row">
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="ai-loading-status" role="status" aria-live="polite">Reading the job requirements…</span>
+          <span class="ai-loading-time" id="ai-loading-time" aria-hidden="true">0s</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-label="AI analysis progress (estimated)"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ai-progress-track">
+          <div class="progress-fill" id="ai-progress-fill"></div>
+        </div>
+        <p class="progress-caption">Estimated progress — Gemini doesn't report exact completion, so this eases toward done rather than counting precisely.</p>
+      </div>
+      <div id="ai-content" hidden>
+        <p class="ai-summary" id="ai-summary"></p>
+        <div class="priority-keywords" id="priority-keywords"></div>
+        <div class="bullet-list" id="bullet-list"></div>
+
+        <div class="apply-rewrites-row">
+          <button class="btn btn-primary" id="apply-rewrites-btn">✏️ Apply all rewrites → updated resume</button>
+          <span class="apply-rewrites-status" id="apply-rewrites-status" role="status" aria-live="polite"></span>
+        </div>
+        <div class="apply-rewrites-downloads" id="apply-rewrites-downloads" hidden>
+          <button class="btn btn-ghost" id="download-resume-pdf-btn">Download updated resume (.pdf)</button>
+          <button class="btn btn-ghost" id="download-resume-txt-btn">Download updated resume (.txt)</button>
+          <p class="apply-rewrites-note">
+            Note: the PDF is a clean text rebuild, not your original design/fonts/layout —
+            the .txt is often more useful for pasting the improved wording into your own template.
+          </p>
+        </div>
+
+        <div class="analysis-block">
+          <h3 class="analysis-heading"># writing enhancements</h3>
+          <ul class="tip-list" id="writing-tips"></ul>
+        </div>
+
+        <div class="analysis-block">
+          <h3 class="analysis-heading"># readiness roadmap</h3>
+          <div class="roadmap-grid">
+            <div class="roadmap-card">
+              <div class="roadmap-label">Recommended projects</div>
+              <ul class="tip-list" id="roadmap-projects"></ul>
+            </div>
+            <div class="roadmap-card">
+              <div class="roadmap-label">Skills to learn</div>
+              <ul class="tip-list" id="roadmap-skills"></ul>
+            </div>
+            <div class="roadmap-card">
+              <div class="roadmap-label">Experience gaps</div>
+              <p class="roadmap-gap-text" id="roadmap-gaps"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="analysis-block">
+          <h3 class="analysis-heading"># suggested path to get there</h3>
+          <p class="path-overview" id="path-overview"></p>
+          <div class="path-phases" id="path-phases"></div>
+        </div>
+      </div>
+      <p class="ai-error" id="ai-error" role="alert" hidden></p>
+    </div>
+
+    <!-- ============ EXPORT ============ -->
+    <div class="export-row">
+      <button class="btn btn-ghost" id="export-md-btn">Download .md report</button>
+      <button class="btn btn-ghost" id="export-pdf-btn">Download .pdf report</button>
+    </div>
+
+    <!-- ============ CHAT ============ -->
+    <div class="section-head section-head--tight" id="chat-heading" hidden>
+      <p class="eyebrow">04 · ask a follow-up</p>
+      <h2>Have a question about this?</h2>
+    </div>
+
+    <div class="chat-panel" id="chat-panel" hidden>
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-label="Conversation">
+        <div class="chat-bubble chat-bubble--assistant">
+          Ask me anything about this analysis — which gap to close first, how to phrase a specific bullet, what a "readiness roadmap" item actually means, that kind of thing.
+        </div>
+      </div>
+      <div class="chat-loading" id="chat-loading" role="status" hidden>
+        <span class="spinner" aria-hidden="true"></span> thinking…
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" class="chat-input" aria-label="Your message" placeholder="e.g. Which gap should I close first?" />
+        <button class="btn btn-primary" id="chat-send-btn">Send</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <span>Resume<span class="brand-accent">Max</span> — built for engineers who'd rather see the diff than guess.</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
