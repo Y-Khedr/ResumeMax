@@ -6,7 +6,7 @@ These are ranked *for your actual stated goal*: a portfolio piece that could gen
 
 ---
 
-## 🔴 Do these first (8–10)
+## Do these first (8–10)
 
 ### 1. Deploy it to a real public URL — **10**
 Right now this only runs on `localhost`. A link in your CV/LinkedIn that actually opens a working product is worth more than everything else on this list combined — it's the difference between "I built this" and "here, try it." Render, Railway, or Fly.io all have free/cheap tiers that run a FastAPI app with almost no config changes needed (your `.env` becomes a dashboard environment variable instead of a file).
@@ -25,7 +25,7 @@ People are uploading resumes — real names, addresses sometimes, work history. 
 
 ---
 
-## 🟡 High value, do soon (6–7)
+## High value, do soon (6–7)
 
 ### 6. Actual professional visual polish pass — **7**
 You already asked for this and I haven't delivered it yet — refined color palette, spacing consistency, and general "does this look like a funded startup or a hackathon project" pass. The diff/terminal concept is strong; it just needs another 20% of craft.
@@ -65,7 +65,7 @@ Pairs with item #3 — once you have tests, running them automatically on every 
 
 ---
 
-## 🟢 Worth doing eventually, not urgent (4–5)
+## Worth doing eventually, not urgent (4–5)
 
 ### 18. Resume version comparison (draft A vs. draft B against the same job) — **6**
 Nice differentiator, moderate build effort — good "phase 2" feature once the core product is solid.
@@ -87,7 +87,7 @@ Sounds nice, but creates real privacy complexity (someone's resume gap analysis,
 
 ---
 
-## ⚪ Lower priority right now (below 5)
+## Lower priority right now (below 5)
 
 ### 24. Prompt-injection hardening for resume/job text — **5**
 Real in theory (someone could put "ignore previous instructions" in a job description), but low real-world stakes for this specific tool since the output is just advice text, not an action with consequences. Worth a light pass, not a priority.
@@ -99,7 +99,3 @@ The product is fairly self-explanatory as-is (upload, paste, scan). Probably not
 Nice, but marginal — you already have a fairly considered animation system (scan sweep, progress bar, diff-line reveals). Diminishing returns from polishing further before the bigger items above are done.
 
 ---
-
-## If you want my honest single recommendation
-
-Do **#1 (deploy it live)** next. Everything else on this list is easier to prioritize correctly once real people (even just you, from your phone, away from your dev machine) are actually hitting the deployed version — you'll find out fast which of these actually matter versus which are theoretical concerns.
