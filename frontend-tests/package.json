@@ -1,0 +1,9 @@
+{
+  "name": "resumemax-frontend-tests",
+  "private": true,
+  "description": "Dev-only jsdom tests for the vanilla frontend. The app itself needs no Node.",
+  "scripts": {
+    "test": "node full_site.test.js && node cover_letter.test.js"
+  },
+  "devDependencies": { "jsdom": "^24.0.0" }
+}

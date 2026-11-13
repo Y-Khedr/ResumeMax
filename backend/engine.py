@@ -49,6 +49,13 @@ except ImportError:
     OCR_AVAILABLE = False
 
 try:
+    import wordninja
+    WORDNINJA_AVAILABLE = True
+except ImportError:
+    wordninja = None
+    WORDNINJA_AVAILABLE = False
+
+try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import LETTER
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -81,6 +88,45 @@ class ExtractionResult:
     warning: Optional[str] = None
 
 
+# Some resume templates/PDF generators omit actual space characters between
+# words entirely, relying purely on glyph positioning for visual spacing —
+# pdfplumber then extracts a long fused run like "Commandedastructured...".
+# Only worth attempting word-segmentation on tokens this long; real single
+# words/identifiers essentially never reach this length, so false positives
+# on genuinely-correct text are rare.
+_MISSING_SPACE_TOKEN_THRESHOLD = 20
+_MISSING_SPACE_TOKEN_PATTERN = re.compile(r"\S{" + str(_MISSING_SPACE_TOKEN_THRESHOLD) + r",}")
+
+
+def _fix_missing_spaces(text: str) -> str:
+    """
+    Detects abnormally long space-less tokens (the PDF-extraction artifact
+    described above) and uses statistical word-segmentation (wordninja) to
+    re-insert spaces. Skips anything that looks like a URL/email/path,
+    since segmenting those would actively corrupt them rather than fix them.
+    """
+    if not WORDNINJA_AVAILABLE or not text:
+        return text
+
+    def _fix_token(match: re.Match) -> str:
+        token = match.group(0)
+        if any(marker in token for marker in ("@", "/", "\\", "http", "www.")):
+            return token
+        letters_only = re.sub(r"[^A-Za-z]", "", token)
+        if len(letters_only) < _MISSING_SPACE_TOKEN_THRESHOLD:
+            return token
+        try:
+            words = wordninja.split(token)
+        except Exception:
+            return token
+        # Only replace if segmentation actually found multiple words —
+        # a length-1 result means wordninja itself thinks it's one token,
+        # so leave it untouched rather than risk a low-confidence rewrite.
+        return " ".join(words) if len(words) > 1 else token
+
+    return _MISSING_SPACE_TOKEN_PATTERN.sub(_fix_token, text)
+
+
 def extract_text_from_pdf(pdf_file, ocr_fallback: bool = True) -> ExtractionResult:
     """
     Extracts raw text from an uploaded PDF. If native text extraction returns
@@ -93,13 +139,24 @@ def extract_text_from_pdf(pdf_file, ocr_fallback: bool = True) -> ExtractionResu
         pdf_file.seek(0)
         with pdfplumber.open(pdf_file) as pdf:
             for page in pdf.pages:
-                extracted = page.extract_text()
+                # layout=True preserves the resume's original horizontal
+                # spacing (via runs of literal spaces) instead of pdfplumber's
+                # default, which reads purely by y-position and silently
+                # glues side-by-side columns onto one line — e.g. a sidebar
+                # skill like "Figma" fusing directly onto the neighboring
+                # column's heading text with no space or punctuation between
+                # them. That fusion was corrupting phrase matching for any
+                # multi-column resume (common in design-oriented templates).
+                # The large gaps this preserves are then treated as column
+                # boundaries below, in _DELIM_PATTERN.
+                extracted = page.extract_text(layout=True)
                 if extracted:
                     text += extracted + "\n"
     except Exception as e:
         return ExtractionResult(text="", method="empty", warning=f"Could not parse PDF: {e}")
 
     text = text.strip()
+    text = _fix_missing_spaces(text)
 
     # Heuristic: fewer than 40 characters of extracted text almost always
     # means the PDF is a scanned image with no embedded text layer.
@@ -165,10 +222,34 @@ def calculate_weighted_score(resume_text: str, job_description: str,
     Blends the raw cosine-similarity score with explicit keyword-phrase
     coverage, since ATS systems in practice weight exact keyword hits more
     heavily than general semantic overlap.
+
+    Coverage is weighted far more heavily than raw similarity (0.75 vs
+    0.25) — TF-IDF cosine similarity between a resume and a job posting is
+    structurally modest even for a genuinely strong match, since they're
+    different document types with different overall vocabulary/structure,
+    not paraphrases of each other. A candidate with 100% of the required
+    keywords was previously still capped around 65% under the old 0.6/0.4
+    weighting purely because of that document-similarity drag — verified
+    against a real extraction test with perfect 8/8 keyword coverage, which
+    only produced 65.2% before this change and 85.5% after it. Coverage is
+    the metric that's actually meaningful and interpretable to a candidate;
+    raw similarity is kept as a smaller smoothing factor, not the primary
+    signal.
     """
     base = calculate_ats_score(resume_text, job_description) / 100.0
-    coverage = (len(matched) / len(job_phrases)) if job_phrases else 0.0
-    blended = (0.6 * base) + (0.4 * coverage)
+
+    # Recognized skills (gazetteer) count fully; generic n-gram phrases from
+    # prose count far less. Prose postings produce many n-grams that aren't
+    # requirements at all ("growing", "requirements", "web platform"), and
+    # letting them count equally made even a strong resume look like it was
+    # missing most of the job.
+    def weight(phrase: str) -> float:
+        return 1.0 if _GAZETTEER_FULL.fullmatch(phrase) else 0.25
+
+    total = sum(weight(p) for p in job_phrases)
+    got = sum(weight(p) for p in matched)
+    coverage = (got / total) if total else 0.0
+    blended = (0.25 * base) + (0.75 * coverage)
     return round(blended * 100, 2)
 
 
@@ -201,10 +282,37 @@ TECH_GAZETTEER = [
     r"scrum", r"kanban", r"object[- ]oriented programming", r"design patterns?",
     r"version control", r"git(hub|lab)?", r"linux", r"bash scripting",
     r"powershell", r"c\+\+", r"c#", r"typescript", r"javascript",
+    # UI/UX & product design — previously entirely absent, which meant a
+    # design-focused resume got zero benefit from the curated gazetteer and
+    # fell back entirely on the more error-prone n-gram matcher.
+    r"adobe xd", r"figma", r"sketch", r"invision", r"framer", r"zeplin",
+    r"design systems?", r"wirefram(e|ing)s?", r"prototyp(e|ing)s?",
+    r"user research", r"usability testing", r"user testing",
+    r"information architecture", r"interaction design", r"visual design",
+    r"ui/?ux( design)?", r"user experience( design)?", r"user interface( design)?",
+    r"design thinking", r"heuristic evaluation", r"a/b testing",
+    r"responsive design", r"accessibility( design)?", r"wcag",
+    r"design ops", r"design tokens?", r"atomic design",
+    r"adobe (photoshop|illustrator|premiere|after effects)",
+    r"user flows?", r"journey maps?", r"persona(s)? development",
+    # Bare single-word tech names. The multi-word patterns above only catch
+    # compounds ("react.js", "java spring boot"), so a plain "React" or
+    # "Python" otherwise depended on winning the generic n-gram ranking.
+    # Deliberately excludes words that are common English ("go", "swift").
+    r"python", r"java", r"react", r"angular", r"svelte", r"django", r"flask",
+    r"fastapi", r"spring", r"laravel", r"express", r"sql", r"nosql", r"html5?",
+    r"css3?", r"sass", r"tailwind( css)?", r"bootstrap", r"redux", r"webpack",
+    r"swift ?ui", r"kotlin", r"ruby", r"php", r"scala", r"rust", r"golang",
+    r"matlab", r"tableau", r"power ?bi", r"excel", r"jira", r"confluence",
+    r"notion", r"slack", r"figjam", r"miro", r"storybook", r"selenium",
+    r"jest", r"pytest", r"junit", r"cypress", r"firebase", r"supabase",
+    r"jenkins", r"ansible", r"nginx", r"graphql", r"oauth", r"jwt",
+    r"opencv", r"pandas", r"numpy", r"keras", r"hadoop", r"snowflake", r"bigquery",
 ]
 _GAZETTEER_PATTERN = re.compile(
     r"\b(" + "|".join(TECH_GAZETTEER) + r")\b", flags=re.IGNORECASE
 )
+_GAZETTEER_FULL = re.compile(r"(?:" + "|".join(TECH_GAZETTEER) + r")", flags=re.IGNORECASE)
 
 GENERIC_NOISE = {
     "team", "work", "years", "ability", "strong", "knowledge", "skills",
@@ -217,7 +325,7 @@ GENERIC_NOISE = {
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS as _SKLEARN_STOPWORDS  # noqa: E402
 
 _JOIN_BREAK_WORDS = {"and", "with", "using", "including", "such", "as", "for", "know", "must", "have"}
-_DELIM_PATTERN = re.compile(r"[,;.\n•|/()]+")
+_DELIM_PATTERN = re.compile(r"[,;.\n•|/()]+|[ \t]{2,}")
 _TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+.#-]{1,}")
 
 
@@ -282,9 +390,18 @@ def _ngram_phrases(text: str, top_n: int = 40) -> set[str]:
                     continue
                 counts[" ".join(gram).lower()] += 1
 
-    # Prefer longer, more specific phrases; break ties by frequency.
-    ranked = sorted(counts.items(), key=lambda kv: (-len(kv[0].split()), -kv[1]))
-    return {phrase for phrase, _ in ranked[:top_n]}
+    # Unigrams and multi-word phrases are ranked and capped SEPARATELY,
+    # each by frequency. A single top_n cutoff applied to everything at once
+    # (ranked by length) used to let a document rich in 2-3 word candidates
+    # crowd out valid short skill names entirely (e.g. "python" never making
+    # the cut in a resume full of multi-word phrases) — deduplication
+    # already removes a short phrase when a longer one containing it is
+    # kept, so there's no need for length-based ranking to do that job too.
+    unigrams = {p: c for p, c in counts.items() if " " not in p}
+    multiword = {p: c for p, c in counts.items() if " " in p}
+    top_unigrams = sorted(unigrams.items(), key=lambda kv: -kv[1])[: top_n // 2]
+    top_multiword = sorted(multiword.items(), key=lambda kv: (-len(kv[0].split()), -kv[1]))[: top_n // 2]
+    return {p for p, _ in top_unigrams} | {p for p, _ in top_multiword}
 
 
 def _dedupe_subphrases(phrase_map: dict[str, str]) -> set[str]:
@@ -332,17 +449,64 @@ def extract_key_phrases(text: str) -> set[str]:
     for g in gazetteer_hits:
         phrase_map[g.lower()] = g
 
+    # Canonicalize to known skills: an n-gram that merely wraps a recognized
+    # skill ("scaling design systems", "running usability testing", or an
+    # artifact like "react conducted user") is noise around that skill, and
+    # keeping the longer wrapper means the clean skill can never match the
+    # other document's phrasing of it. Keep the skill, drop the wrapper.
+    gazetteer_lower = {g.lower() for g in gazetteer_hits}
+    for phrase in list(phrase_map):
+        if phrase in gazetteer_lower:
+            continue
+        if any(re.search(r"\b" + re.escape(g) + r"\b", phrase) for g in gazetteer_lower):
+            del phrase_map[phrase]
+
     return _dedupe_subphrases(phrase_map)
 
 
+def _stem_token(tok: str) -> str:
+    """Very light plural folding ('systems' -> 'system', 'prototypes' -> 'prototype').
+    Applied identically to both documents, so it only has to be consistent,
+    not linguistically perfect."""
+    if len(tok) > 3 and tok.endswith("ies"):
+        return tok[:-3] + "y"
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+        return tok[:-1]
+    return tok
+
+
+def _norm_tokens(text: str) -> list[str]:
+    return [_stem_token(t) for t in re.findall(r"[a-z0-9+#]+", text.lower())]
+
+
 def diff_phrases(resume_text: str, job_description: str) -> tuple[list[str], list[str], list[str]]:
-    """Returns (job_phrases, matched, missing) using case-insensitive comparison."""
+    """
+    Returns (job_phrases, matched, missing). Comparison is case-insensitive,
+    ignores punctuation/hyphenation, and folds plurals — "design systems" in
+    a posting matches "design system" in a resume.
+    """
     resume_phrases = extract_key_phrases(resume_text)
     job_phrases = extract_key_phrases(job_description)
 
-    resume_lower = {p.lower() for p in resume_phrases}
-    matched = sorted([p for p in job_phrases if p.lower() in resume_lower])
-    missing = sorted([p for p in job_phrases if p.lower() not in resume_lower])
+    resume_keys = {" ".join(_norm_tokens(p)) for p in resume_phrases}
+    # Normalized full text, padded so a phrase must match on whole-token boundaries.
+    resume_norm_text = " " + " ".join(_norm_tokens(resume_text)) + " "
+
+    def _is_matched(phrase: str) -> bool:
+        key = " ".join(_norm_tokens(phrase))
+        if not key:
+            return False
+        if key in resume_keys:
+            return True
+        # Fallback: the phrase may be in the resume only as part of a longer
+        # extracted phrase (the job asks for "design systems"; the resume says
+        # "...creating design systems at scale" and extraction kept the fuller
+        # phrase). Search the normalized raw text on whole-token boundaries so
+        # that still counts without depending on extraction's phrase edges.
+        return (" " + key + " ") in resume_norm_text
+
+    matched = sorted([p for p in job_phrases if _is_matched(p)])
+    missing = sorted([p for p in job_phrases if not _is_matched(p)])
     return sorted(job_phrases), matched, missing
 
 
@@ -523,13 +687,28 @@ FALLBACK_MODEL = "gemini-3.6-flash"
 # request) where retrying just wastes time before failing anyway.
 _TRANSIENT_ERROR_MARKERS = (
     "503", "unavailable", "resource_exhausted", "429",
-    "rate limit", "overloaded", "deadline exceeded", "internal error",
+    "rate limit", "overloaded", "deadline exceeded", "deadline_exceeded", "internal error",
 )
 
 
 def _is_transient_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(marker in msg for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def _is_timeout_error(exc: Exception) -> bool:
+    """True for client/server timeouts. These are never retried: a call that
+    already burned its whole time budget won't get faster on a second try, and
+    retrying just multiplies how long the user waits."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return "timeout" in name or any(m in msg for m in ("timed out", "timeout", "deadline exceeded", "deadline_exceeded"))
+
+
+def _make_client(api_key: str, timeout_s: float):
+    """Gemini client with a hard per-request timeout. The SDK has no short
+    default, so a stalled connection would otherwise hang a request indefinitely."""
+    return genai.Client(api_key=api_key, http_options={"timeout": int(timeout_s * 1000)})
 
 
 def _call_with_retry(client, model: str, prompt: str, config=None,
@@ -550,7 +729,7 @@ def _call_with_retry(client, model: str, prompt: str, config=None,
             return client.models.generate_content(**kwargs)
         except Exception as e:
             last_exc = e
-            if not _is_transient_error(e):
+            if not _is_transient_error(e) or _is_timeout_error(e):
                 raise
             if attempt < max_attempts:
                 delay = base_delay * (2 ** (attempt - 1))
@@ -616,7 +795,7 @@ Instructions:
    sequential (what to do first, second, third), with realistic time
    estimates, not just a bag of generic tips.
 """
-    client = genai.Client(api_key=active_key)
+    client = _make_client(active_key, 60)
     config = genai_types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=_RESPONSE_SCHEMA,
@@ -639,7 +818,7 @@ Instructions:
             )
         except Exception as e:
             last_error = e
-            if not _is_transient_error(e) or is_last_model:
+            if not _is_transient_error(e) or _is_timeout_error(e) or is_last_model:
                 break
             logger.warning("Falling back from %s to %s after transient failure: %s",
                             current_model, models_to_try[i + 1], e)
@@ -695,6 +874,173 @@ Instructions:
             )
         )
     return AISuggestions(error=f"Error connecting to Gemini API: {last_error}")
+
+
+# ---------------------------------------------------------------------------
+# 4a. AI REQUIREMENT MATCHING
+#     Lexical phrase matching can't tell a real requirement from filler in a
+#     prose job posting, and can't recognize paraphrases ("scaling design
+#     systems" vs "maintaining a scalable design system"). This asks the
+#     model to extract the posting's actual requirements as short skill tags
+#     and judge each against the resume, with evidence that is verified in
+#     code so the model can't simply assert a match it can't support.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RequirementMatch:
+    skill: str
+    importance: str  # "required" | "preferred"
+    found: bool
+    evidence: str = ""
+
+
+@dataclass
+class RequirementMatchResult:
+    requirements: list[RequirementMatch] = field(default_factory=list)
+    error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and len(self.requirements) > 0
+
+
+_REQUIREMENTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "requirements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "Short atomic skill/competency tag, 1-4 words (e.g. 'Figma', 'Design Systems', 'Usability Testing', 'React'). Never a full sentence.",
+                    },
+                    "importance": {
+                        "type": "string",
+                        "description": "Either 'required' or 'preferred'.",
+                    },
+                    "found_in_resume": {"type": "boolean"},
+                    "evidence": {
+                        "type": "string",
+                        "description": "Short phrase (max 15 words) copied from the resume that demonstrates this skill; empty string if not found.",
+                    },
+                },
+                "required": ["skill", "importance", "found_in_resume", "evidence"],
+            },
+        }
+    },
+    "required": ["requirements"],
+}
+
+
+def _evidence_supported(evidence: str, resume_text: str) -> bool:
+    """
+    Guards against hallucinated matches: a skill only counts as found if the
+    evidence the model quoted is actually grounded in the resume text. Not a
+    strict substring check (models lightly reword quotes) — at least 60% of
+    the evidence's meaningful words must appear in the resume.
+    """
+    tokens = [t.lower() for t in re.findall(r"[A-Za-z][A-Za-z0-9+#]+", evidence or "")]
+    tokens = [t for t in tokens if t not in _SKLEARN_STOPWORDS]
+    if not tokens:
+        return False
+    haystack = set(t.lower() for t in re.findall(r"[A-Za-z][A-Za-z0-9+#]+", resume_text))
+    hits = sum(1 for t in tokens if t in haystack)
+    return hits / len(tokens) >= 0.6
+
+
+def score_from_requirements(requirements: list[RequirementMatch]) -> float:
+    """Weighted requirement coverage: required = 1.0, preferred = 0.5."""
+    if not requirements:
+        return 0.0
+    def w(r: RequirementMatch) -> float:
+        return 1.0 if r.importance == "required" else 0.5
+    total = sum(w(r) for r in requirements)
+    got = sum(w(r) for r in requirements if r.found)
+    return round(100.0 * got / total, 2) if total else 0.0
+
+
+def match_requirements_with_ai(resume_text: str, job_description: str,
+                                api_key: str = None,
+                                model: str = DEFAULT_MODEL) -> RequirementMatchResult:
+    """
+    Extracts the job's concrete requirements and judges each against the
+    resume. Never raises; returns an error result so the caller can fall
+    back to the keyword matcher. Uses a smaller retry budget than the
+    long-form AI features, since this sits on the scan's critical path.
+    """
+    if not GENAI_AVAILABLE:
+        return RequirementMatchResult(error="google-genai package is not installed.")
+    active_key = api_key or os.getenv("GEMINI_API_KEY")
+    if not active_key:
+        return RequirementMatchResult(error="GEMINI_API_KEY is not set.")
+
+    prompt = f"""
+You are an expert technical recruiter doing a precise resume-to-job match.
+
+Job Description:
+{job_description[:6000]}
+
+Resume Text (extracted from a PDF; multi-column layouts may appear interleaved):
+{resume_text[:8000]}
+
+Task:
+1. Extract the job's concrete requirements as short, atomic skill/competency
+   tags (1-4 words each, e.g. "Figma", "Design Systems", "Usability Testing",
+   "React"). Aim for 6-20. Ignore company description, perks, and generic
+   filler ("growing team", "fast-paced"). Include at most 2 soft skills, and
+   only if the posting explicitly requires them.
+2. Mark each "required" or "preferred" (wording like "plus", "nice to have",
+   "bonus", or "familiarity with" means preferred).
+3. For each, decide whether the resume demonstrates it. Treat synonyms and
+   paraphrases as a match (e.g. "scaling design systems" is satisfied by
+   "maintaining a scalable design system"). Do NOT credit a skill the resume
+   gives no real support for — never assume.
+4. For every skill you mark as found, give a short phrase (max 15 words)
+   copied from the resume as evidence. Leave evidence empty if not found.
+"""
+    client = _make_client(active_key, 15)
+    config = genai_types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=_REQUIREMENTS_SCHEMA,
+    )
+    models_to_try = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+
+    last_error: Optional[Exception] = None
+    response = None
+    for i, current_model in enumerate(models_to_try):
+        try:
+            response = _call_with_retry(client, current_model, prompt, config,
+                                         max_attempts=2 if i == 0 else 1)
+            break
+        except Exception as e:
+            last_error = e
+            if not _is_transient_error(e) or _is_timeout_error(e):
+                break
+    if response is None:
+        return RequirementMatchResult(error=f"AI matching failed: {last_error}")
+
+    try:
+        data = json.loads(response.text)
+    except json.JSONDecodeError as e:
+        return RequirementMatchResult(error=f"AI matching returned non-JSON output: {e}")
+
+    seen: set[str] = set()
+    out: list[RequirementMatch] = []
+    for item in (data.get("requirements") or [])[:30]:
+        skill = str(item.get("skill", "")).strip()[:60]
+        if not skill or skill.lower() in seen:
+            continue
+        seen.add(skill.lower())
+        importance = "preferred" if str(item.get("importance", "")).lower().startswith("pref") else "required"
+        evidence = str(item.get("evidence", "")).strip()
+        found = bool(item.get("found_in_resume")) and _evidence_supported(evidence, resume_text)
+        out.append(RequirementMatch(skill=skill, importance=importance, found=found,
+                                     evidence=evidence if found else ""))
+    if not out:
+        return RequirementMatchResult(error="AI matching returned no requirements.")
+    return RequirementMatchResult(requirements=out)
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +1106,7 @@ sentences — conversational, not another full report. Respond with plain
 text only, no markdown headers.
 Coach:"""
 
-    client = genai.Client(api_key=active_key)
+    client = _make_client(active_key, 40)
     models_to_try = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
 
     last_error: Optional[Exception] = None
@@ -771,13 +1117,110 @@ Coach:"""
             return ChatReply(reply=response.text.strip())
         except Exception as e:
             last_error = e
-            if not _is_transient_error(e) or is_last_model:
+            if not _is_transient_error(e) or _is_timeout_error(e) or is_last_model:
                 break
             continue
 
     if last_error and _is_transient_error(last_error):
         return ChatReply(error="Gemini is temporarily overloaded and didn't respond after retries. Try again in a moment.")
     return ChatReply(error=f"Error connecting to Gemini API: {last_error}")
+
+
+# ---------------------------------------------------------------------------
+# 4c. COVER LETTER GENERATION
+#     Reuses the resume/job text the candidate already provided — no separate
+#     form. Same retry + model-fallback strategy as the other AI features.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CoverLetterResult:
+    letter: str = ""
+    error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.letter)
+
+
+# Optional tone modifiers: a short client-facing key -> a concrete instruction
+# appended to the prompt. Unknown or missing tone means no modifier.
+_COVER_LETTER_TONES = {
+    "concise": "Make this version noticeably shorter than a standard cover letter: 3 tight paragraphs at most, no filler.",
+    "confident": "Use a more confident, assertive tone throughout, without overstating anything the resume doesn't support.",
+    "conversational": "Use a warmer, more conversational tone: less corporate boilerplate, more like a direct, genuine note.",
+    "leadership": "Emphasize leadership, ownership, and cross-functional collaboration wherever the resume actually supports it. Do not invent leadership experience.",
+    "technical": "Emphasize specific technical skills, tools, and hands-on implementation details wherever the resume actually supports it.",
+}
+
+
+def generate_cover_letter(resume_text: str, job_description: str, analysis_summary: str = "",
+                           tone: Optional[str] = None, api_key: str = None,
+                           model: str = DEFAULT_MODEL) -> CoverLetterResult:
+    """
+    Writes a tailored cover letter from the resume and job text already on
+    hand. Returns plain text. Never raises; failures come back as an error
+    result so the API layer can respond cleanly.
+    """
+    if not GENAI_AVAILABLE:
+        return CoverLetterResult(error="google-genai package is not installed in this environment.")
+    active_key = api_key or os.getenv("GEMINI_API_KEY")
+    if not active_key:
+        return CoverLetterResult(error="⚠️ GEMINI_API_KEY is not set. Add it to backend/.env and restart the server.")
+
+    tone_line = _COVER_LETTER_TONES.get((tone or "").strip().lower(), "")
+
+    prompt = f"""
+You are a career coach writing a complete, tailored cover letter for this
+candidate and role.
+
+Job Description:
+{job_description[:6000]}
+
+Resume Text:
+{resume_text[:8000]}
+
+Analysis summary so far: {analysis_summary or "(none provided)"}
+
+Instructions:
+1. Find the candidate's real name at the top of the resume and use it in the
+   signature. If it genuinely can't be determined, use "[Your Name]". Never
+   invent a name.
+2. Do not invent a hiring manager's name or a company name unless the job
+   description states one. Otherwise address the letter to "Hiring Manager"
+   and keep company references generic.
+3. Write 3-4 paragraphs: an opening that names the role with a genuine hook;
+   a middle that connects specific resume experience to specific job
+   requirements (concrete, not generic); and a closing that is enthusiastic
+   without being over the top.
+4. Do not fabricate metrics, employers, or experience that isn't in the
+   resume. Ground every claim in what is actually there.
+{("5. " + tone_line) if tone_line else ""}
+
+Respond with ONLY the finished letter text: no markdown, no subject line, no
+commentary before or after it.
+"""
+
+    client = _make_client(active_key, 50)
+    models_to_try = [model] if model == FALLBACK_MODEL else [model, FALLBACK_MODEL]
+
+    last_error: Optional[Exception] = None
+    for i, current_model in enumerate(models_to_try):
+        is_last_model = i == len(models_to_try) - 1
+        try:
+            response = _call_with_retry(client, current_model, prompt, None,
+                                         max_attempts=3 if i == 0 else 2)
+            letter = (response.text or "").strip()
+            if not letter:
+                return CoverLetterResult(error="The model returned an empty letter. Try again.")
+            return CoverLetterResult(letter=letter)
+        except Exception as e:
+            last_error = e
+            if not _is_transient_error(e) or _is_timeout_error(e) or is_last_model:
+                break
+
+    if last_error and _is_transient_error(last_error):
+        return CoverLetterResult(error="Gemini is temporarily overloaded and didn't respond after retries. Try again in a moment.")
+    return CoverLetterResult(error=f"Error connecting to Gemini API: {last_error}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script src="theme-init.js"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="description" content="ResumeMax — see the exact diff between your resume and a job posting, with AI-powered rewrites and a readiness roadmap." />
 <title>ResumeMax — know what your resume is missing</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 
-<!-- OpenGraph / social preview cards (LinkedIn, Twitter, Slack, etc.) -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="ResumeMax — know what your resume is missing" />
 <meta property="og:description" content="See the exact diff between your resume and a job posting, with AI-powered rewrites and a readiness roadmap." />
@@ -22,20 +20,49 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<div class="noise-overlay" aria-hidden="true"></div>
+<!-- ============ LAUNCH SCREEN ============ -->
+<div id="launch-screen" role="status" aria-label="ResumeMax launching">
+  <div class="launch-glow" aria-hidden="true"></div>
+  <div class="launch-content">
+    <div class="launch-badge">
+      <span class="launch-badge-dot" aria-hidden="true"></span>
+      <span class="launch-badge-text">System initializing</span>
+    </div>
+    <h1 class="launch-title">ResumeMax</h1>
+    <p class="launch-tagline">Resume intelligence, focused.</p>
+    <div class="launch-progress-track" aria-hidden="true">
+      <div class="launch-progress-fill"></div>
+    </div>
+    <p class="launch-caption">Loading workspace</p>
+  </div>
+</div>
+
+<nav class="side-nav" aria-label="Page sections">
+  <a href="#app" class="side-nav-link is-active" id="nav-inputs">Inputs</a>
+  <a href="#results-section" class="side-nav-link is-disabled" id="nav-results" aria-disabled="true">Results</a>
+  <a href="#recommendations-anchor" class="side-nav-link is-disabled" id="nav-recommendations" aria-disabled="true">Recommendations</a>
+  <a href="#export-section" class="side-nav-link is-disabled" id="nav-export" aria-disabled="true">Export</a>
+  <a href="#cover-letter-section" class="side-nav-link is-disabled" id="nav-cover-letter" aria-disabled="true">Cover letter</a>
+  <a href="#chat-panel" class="side-nav-link is-disabled" id="nav-chat" aria-disabled="true">Chat</a>
+</nav>
 
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
-      <span class="brand-mark">&gt;_</span>
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
       <span class="brand-name">Resume<span class="brand-accent">Max</span></span>
+      <span class="brand-tag">beta</span>
     </div>
     <div class="topbar-right">
+      <div class="fit-chip" id="fit-chip" hidden>
+        <span class="fit-chip-dot" aria-hidden="true"></span>
+        <span class="fit-chip-text" id="fit-chip-text">— fit</span>
+      </div>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch between dark and light mode">
         <span class="theme-toggle-icon" id="theme-toggle-icon">🌙</span>
       </button>
@@ -49,27 +76,27 @@
   <section class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
-        <p class="eyebrow">$ resumemax --resume --job</p>
-        <h1>Know exactly what<br>your resume is<br><span class="hero-accent">missing.</span></h1>
+        <span class="eyebrow-pill">
+          <span class="eyebrow-pill-dot" aria-hidden="true"></span>
+          <span class="eyebrow-pill-text">resumemax --resume --job</span>
+        </span>
+        <h1>Know exactly what your resume is <span class="hero-accent">missing.</span></h1>
         <p class="hero-sub">
-          Paste a job posting, upload your resume, and see the gap as a
-          real diff — what matches, what's missing, and the exact bullet
-          rewrites to close it.
+          Paste a job posting, upload your resume, and see the gap as a real
+          diff — what matches, what's missing, and the exact bullet rewrites
+          to close it.
         </p>
-        <a href="#app" class="btn btn-primary">Run a scan <span aria-hidden="true">→</span></a>
       </div>
 
-      <div class="hero-visual">
-        <div class="terminal-card" id="hero-terminal">
-          <div class="terminal-titlebar" aria-hidden="true">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span class="terminal-filename">gap_report.diff</span>
-          </div>
-          <div class="terminal-body" id="hero-diff-lines" aria-hidden="true">
-            <!-- populated by JS, staggered fade-in — purely decorative demo content -->
-          </div>
+      <div class="panel hero-diff-card" aria-hidden="true">
+        <div class="panel-strip">
+          <span class="panel-eyebrow">gap_report.diff</span>
+          <span class="panel-meta">3 changes</span>
+        </div>
+        <div class="hero-diff-lines scroll-thin" id="hero-diff-lines">
+          <div class="diff-line diff-line--add"><span class="diff-line-gutter">+</span><span>Java Spring Boot</span></div>
+          <div class="diff-line diff-line--add"><span class="diff-line-gutter">+</span><span>REST APIs</span></div>
+          <div class="diff-line diff-line--del"><span class="diff-line-gutter">−</span><span>Kubernetes</span></div>
         </div>
       </div>
     </div>
@@ -77,189 +104,276 @@
 
   <!-- ============ APP ============ -->
   <section id="app" class="app-section">
-    <div class="section-head">
-      <p class="eyebrow">01 · inputs</p>
-      <h2>Feed it a resume and a target role.</h2>
-    </div>
-
-    <div class="input-grid">
-      <div class="panel" id="resume-panel">
-        <div class="panel-label" id="resume-panel-label">Resume</div>
-        <label class="dropzone" id="dropzone" for="resume-input" tabindex="0" role="button"
-               aria-describedby="dropzone-content">
-          <input type="file" id="resume-input" accept="application/pdf" hidden />
-          <div class="dropzone-content" id="dropzone-content">
-            <span class="dropzone-icon" aria-hidden="true">↑</span>
-            <span class="dropzone-text">Drop a PDF here, or click to choose</span>
-            <span class="dropzone-hint">.pdf · up to 15MB</span>
-          </div>
-          <div class="scan-sweep" id="scan-sweep" aria-hidden="true">
-            <span class="scan-sweep-line"></span>
-            <span class="scan-sweep-glass">🔍</span>
-          </div>
-        </label>
+    <div class="panel workspace-panel">
+      <div class="panel-strip">
+        <span class="panel-eyebrow">01 · inputs</span>
+        <span class="panel-meta" id="workspace-status">awaiting inputs</span>
       </div>
 
-      <div class="panel">
-        <div class="panel-label" id="job-input-label">Job posting</div>
-        <textarea id="job-input" aria-labelledby="job-input-label" placeholder="Paste the job description here…"></textarea>
+      <div class="hairline-grid workspace-inputs">
+        <div class="workspace-cell" id="resume-panel">
+          <span class="field-label" id="resume-panel-label">Resume</span>
+          <label class="dropzone" id="dropzone" for="resume-input" tabindex="0" role="button"
+                 aria-describedby="dropzone-content">
+            <input type="file" id="resume-input" accept="application/pdf" hidden />
+            <div class="dropzone-content" id="dropzone-content">
+              <span class="dropzone-icon" aria-hidden="true">↑</span>
+              <span class="dropzone-text">Drop a PDF here, or click to choose</span>
+              <span class="dropzone-hint">.pdf · up to 15MB</span>
+            </div>
+            <div class="scan-sweep" id="scan-sweep" aria-hidden="true">
+              <span class="scan-sweep-line"></span>
+              <span class="scan-sweep-glass">🔍</span>
+            </div>
+          </label>
+        </div>
+
+        <div class="workspace-cell">
+          <span class="field-label" id="job-input-label">Job posting</span>
+          <textarea id="job-input" aria-labelledby="job-input-label" placeholder="Paste the job description here…"></textarea>
+        </div>
+      </div>
+
+      <p class="error-line" id="error-line" role="alert" hidden></p>
+
+      <div class="workspace-footer">
+        <div class="controls-row">
+          <label class="toggle">
+            <input type="checkbox" id="ocr-toggle" checked />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">OCR fallback for scanned PDFs</span>
+          </label>
+
+          <input type="text" id="job-title-input" class="job-title-input" aria-label="Job title, for the report" placeholder="Job title (for the report)" value="Target Role" />
+
+          <button class="btn btn-primary btn-scan" id="scan-btn">
+            <span id="scan-btn-text">Run scan</span>
+          </button>
+        </div>
       </div>
     </div>
-
-    <div class="controls-row">
-      <label class="toggle">
-        <input type="checkbox" id="ocr-toggle" checked />
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        <span class="toggle-label">OCR fallback for scanned PDFs</span>
-      </label>
-
-      <input type="text" id="job-title-input" class="job-title-input" aria-label="Job title, for the report" placeholder="Job title (for the report)" value="Target Role" />
-
-      <button class="btn btn-primary btn-scan" id="scan-btn">
-        <span id="scan-btn-text">Run scan</span>
-      </button>
-    </div>
-
-    <p class="error-line" id="error-line" role="alert" hidden></p>
   </section>
 
   <!-- ============ RESULTS ============ -->
   <section class="results-section" id="results-section" hidden>
-    <div class="section-head">
-      <p class="eyebrow">02 · scan result</p>
-      <h2 id="results-heading">Here's the gap.</h2>
-    </div>
+    <div class="panel">
+      <div class="panel-strip">
+        <span class="panel-eyebrow">02 · scan result</span>
+        <h2 class="panel-meta" id="results-heading" style="font-family: var(--font-mono); font-weight: 400;">gap report</h2>
+      </div>
 
-    <div class="results-grid">
-      <div class="score-card">
+      <div class="results-summary">
         <div class="score-ring-wrap">
-          <svg class="score-ring" viewBox="0 0 160 160" width="180" height="180" aria-hidden="true">
+          <svg class="score-ring" viewBox="0 0 160 160" width="132" height="132" aria-hidden="true">
             <circle class="score-ring-track" cx="80" cy="80" r="70" />
             <circle class="score-ring-fill" id="score-ring-fill" cx="80" cy="80" r="70" />
           </svg>
           <div class="score-readout">
-            <span class="score-number" id="score-number">0</span><span class="score-percent">%</span>
+            <span class="score-number tnum" id="score-number">0</span><span class="score-percent">%</span>
             <span class="score-caption">match</span>
           </div>
         </div>
-        <p class="score-note" id="score-note" aria-live="polite"></p>
+
+        <div class="results-stats">
+          <div>
+            <p class="results-stat-value results-stat-value--match tnum" id="matched-count">0</p>
+            <p class="results-stat-label"># matched</p>
+          </div>
+          <div>
+            <p class="results-stat-value results-stat-value--missing tnum" id="missing-count">0</p>
+            <p class="results-stat-label"># missing</p>
+          </div>
+          <p class="score-note" id="score-note" aria-live="polite" style="grid-column: 1 / -1;"></p>
+        </div>
       </div>
 
-      <div class="diff-card">
-        <div class="diff-column">
-          <div class="diff-col-label diff-col-label--matched"># matched — <span id="matched-count">0</span></div>
-          <div class="diff-lines" id="matched-lines"></div>
+      <p class="extraction-note" id="extraction-note" hidden></p>
+
+      <div class="hairline-grid results-diff">
+        <div>
+          <div class="diff-column-head">
+            <span class="diff-column-dot diff-column-dot--match" aria-hidden="true"></span>
+            <span class="diff-column-label diff-column-label--match">matched</span>
+          </div>
+          <div class="diff-lines scroll-thin" id="matched-lines"></div>
         </div>
-        <div class="diff-column">
-          <div class="diff-col-label diff-col-label--missing"># missing — <span id="missing-count">0</span></div>
-          <div class="diff-lines" id="missing-lines"></div>
+        <div>
+          <div class="diff-column-head">
+            <span class="diff-column-dot diff-column-dot--missing" aria-hidden="true"></span>
+            <span class="diff-column-label diff-column-label--missing">missing</span>
+          </div>
+          <div class="diff-lines scroll-thin" id="missing-lines"></div>
         </div>
       </div>
     </div>
-
-    <p class="extraction-note" id="extraction-note" hidden></p>
 
     <!-- ============ AI SECTION ============ -->
-    <div class="section-head section-head--tight">
-      <p class="eyebrow">03 · rewrites</p>
-      <h2>What to change, line by line.</h2>
-    </div>
-
-    <div id="ai-panel">
-      <div class="ai-loading" id="ai-loading">
-        <div class="ai-loading-row">
-          <span class="spinner" aria-hidden="true"></span>
-          <span id="ai-loading-status" role="status" aria-live="polite">Reading the job requirements…</span>
-          <span class="ai-loading-time" id="ai-loading-time" aria-hidden="true">0s</span>
-        </div>
-        <div class="progress-track" role="progressbar" aria-label="AI analysis progress (estimated)"
-             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ai-progress-track">
-          <div class="progress-fill" id="ai-progress-fill"></div>
-        </div>
-        <p class="progress-caption">Estimated progress — Gemini doesn't report exact completion, so this eases toward done rather than counting precisely.</p>
-      </div>
-      <div id="ai-content" hidden>
-        <p class="ai-summary" id="ai-summary"></p>
-        <div class="priority-keywords" id="priority-keywords"></div>
-        <div class="bullet-list" id="bullet-list"></div>
-
-        <div class="apply-rewrites-row">
-          <button class="btn btn-primary" id="apply-rewrites-btn">✏️ Apply all rewrites → updated resume</button>
-          <span class="apply-rewrites-status" id="apply-rewrites-status" role="status" aria-live="polite"></span>
-        </div>
-        <div class="apply-rewrites-downloads" id="apply-rewrites-downloads" hidden>
-          <button class="btn btn-ghost" id="download-resume-pdf-btn">Download updated resume (.pdf)</button>
-          <button class="btn btn-ghost" id="download-resume-txt-btn">Download updated resume (.txt)</button>
-          <p class="apply-rewrites-note">
-            Note: the PDF is a clean text rebuild, not your original design/fonts/layout —
-            the .txt is often more useful for pasting the improved wording into your own template.
-          </p>
+    <section class="recommendations-section">
+      <div class="panel" style="margin-top: 16px;">
+        <div class="panel-strip" id="recommendations-anchor">
+          <span class="panel-eyebrow">03 · rewrites</span>
+          <span class="panel-meta">what to change, line by line</span>
         </div>
 
-        <div class="analysis-block">
-          <h3 class="analysis-heading"># writing enhancements</h3>
-          <ul class="tip-list" id="writing-tips"></ul>
-        </div>
-
-        <div class="analysis-block">
-          <h3 class="analysis-heading"># readiness roadmap</h3>
-          <div class="roadmap-grid">
-            <div class="roadmap-card">
-              <div class="roadmap-label">Recommended projects</div>
-              <ul class="tip-list" id="roadmap-projects"></ul>
+        <div id="ai-panel">
+          <div class="ai-loading" id="ai-loading">
+            <div class="ai-loading-row">
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="ai-loading-status">Reading the job requirements…</span>
+              <span class="ai-loading-time" id="ai-loading-time">0s</span>
             </div>
-            <div class="roadmap-card">
-              <div class="roadmap-label">Skills to learn</div>
-              <ul class="tip-list" id="roadmap-skills"></ul>
-            </div>
-            <div class="roadmap-card">
-              <div class="roadmap-label">Experience gaps</div>
-              <p class="roadmap-gap-text" id="roadmap-gaps"></p>
+            <div class="progress-track" role="progressbar" aria-label="AI analysis progress (estimated)"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ai-progress-track">
+              <div class="progress-fill" id="ai-progress-fill"></div>
             </div>
           </div>
-        </div>
 
-        <div class="analysis-block">
-          <h3 class="analysis-heading"># suggested path to get there</h3>
-          <p class="path-overview" id="path-overview"></p>
-          <div class="path-phases" id="path-phases"></div>
+          <div id="ai-content" hidden>
+            <div class="ai-content-inner">
+              <p class="ai-summary" id="ai-summary"></p>
+            </div>
+
+            <div class="keyword-gap-footer" style="border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+              <p class="keyword-gap-label"># priority keywords to add</p>
+              <div class="priority-keywords" id="priority-keywords"></div>
+            </div>
+
+            <div class="bullet-list" id="bullet-list"></div>
+
+            <div class="apply-rewrites-row">
+              <button class="btn btn-primary" id="apply-rewrites-btn">✏️ Apply all rewrites → updated resume</button>
+              <span class="apply-rewrites-status" id="apply-rewrites-status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="apply-rewrites-downloads" id="apply-rewrites-downloads" hidden>
+              <button class="btn btn-ghost" id="download-resume-pdf-btn">Download updated resume (.pdf)</button>
+              <button class="btn btn-ghost" id="download-resume-txt-btn">Download updated resume (.txt)</button>
+              <p class="apply-rewrites-note">
+                Note: the PDF is a clean text rebuild, not your original design/fonts/layout —
+                the .txt is often more useful for pasting the improved wording into your own template.
+              </p>
+            </div>
+
+            <div class="analysis-block">
+              <h3 class="analysis-heading"># writing enhancements</h3>
+              <ul class="tip-list" id="writing-tips"></ul>
+            </div>
+
+            <div class="analysis-block">
+              <h3 class="analysis-heading"># readiness roadmap</h3>
+              <div class="roadmap-grid">
+                <div>
+                  <p class="roadmap-label">Recommended projects</p>
+                  <ul class="tip-list" id="roadmap-projects"></ul>
+                </div>
+                <div>
+                  <p class="roadmap-label">Skills to learn</p>
+                  <ul class="tip-list" id="roadmap-skills"></ul>
+                </div>
+              </div>
+              <div class="roadmap-gaps-block">
+                <p class="roadmap-label">Experience gaps</p>
+                <p class="roadmap-gap-text" id="roadmap-gaps"></p>
+              </div>
+            </div>
+
+            <div class="analysis-block">
+              <h3 class="analysis-heading"># suggested path to get there</h3>
+              <p class="path-overview" id="path-overview"></p>
+              <div class="hairline-grid path-phases" id="path-phases"></div>
+            </div>
+          </div>
+
+          <p class="ai-error" id="ai-error" role="alert" hidden></p>
         </div>
       </div>
-      <p class="ai-error" id="ai-error" role="alert" hidden></p>
-    </div>
+    </section>
 
     <!-- ============ EXPORT ============ -->
-    <div class="export-row">
-      <button class="btn btn-ghost" id="export-md-btn">Download .md report</button>
-      <button class="btn btn-ghost" id="export-pdf-btn">Download .pdf report</button>
-    </div>
-
-    <!-- ============ CHAT ============ -->
-    <div class="section-head section-head--tight" id="chat-heading" hidden>
-      <p class="eyebrow">04 · ask a follow-up</p>
-      <h2>Have a question about this?</h2>
-    </div>
-
-    <div class="chat-panel" id="chat-panel" hidden>
-      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-label="Conversation">
-        <div class="chat-bubble chat-bubble--assistant">
-          Ask me anything about this analysis — which gap to close first, how to phrase a specific bullet, what a "readiness roadmap" item actually means, that kind of thing.
+    <section class="export-section" id="export-section">
+      <div class="panel export-toolbar" style="margin-top: 16px;">
+        <span class="panel-meta">export this analysis</span>
+        <div class="export-actions">
+          <button class="btn btn-ghost" id="export-md-btn">Download .md report</button>
+          <button class="btn btn-ghost" id="export-pdf-btn">Download .pdf report</button>
         </div>
       </div>
-      <div class="chat-loading" id="chat-loading" role="status" hidden>
-        <span class="spinner" aria-hidden="true"></span> thinking…
+    </section>
+
+    <!-- ============ COVER LETTER ============ -->
+    <section class="cover-letter-section" id="cover-letter-section" aria-labelledby="cover-letter-title">
+      <div class="panel" style="margin-top: 16px;">
+        <div class="panel-strip">
+          <span class="panel-eyebrow" id="cover-letter-title">05 · cover letter</span>
+          <span class="panel-meta" id="cover-letter-status">optional</span>
+        </div>
+
+        <div class="cover-letter-ready" id="cover-letter-ready">
+          <p class="cover-letter-intro">
+            Turn this analysis into a tailored cover letter, written from the same resume and job posting.
+          </p>
+          <button class="btn btn-ghost" id="cover-letter-generate-btn" type="button"
+                  aria-label="Create a tailored cover letter">Create cover letter</button>
+        </div>
+
+        <div class="cover-letter-loading" id="cover-letter-loading" role="status" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Writing cover letter…</span>
+        </div>
+
+        <p class="ai-error" id="cover-letter-error" role="alert" hidden></p>
+
+        <div class="cover-letter-result" id="cover-letter-result" hidden>
+          <div class="cover-letter-tones" role="group" aria-label="Adjust the tone">
+            <button type="button" class="tone-chip" data-tone="concise">More concise</button>
+            <button type="button" class="tone-chip" data-tone="confident">More confident</button>
+            <button type="button" class="tone-chip" data-tone="conversational">More conversational</button>
+            <button type="button" class="tone-chip" data-tone="leadership">Emphasize leadership</button>
+            <button type="button" class="tone-chip" data-tone="technical">Emphasize technical skills</button>
+          </div>
+
+          <label class="field-label" for="cover-letter-textarea">Tailored cover letter</label>
+          <textarea id="cover-letter-textarea" class="cover-letter-textarea" spellcheck="true"></textarea>
+
+          <div class="cover-letter-controls">
+            <button class="btn btn-ghost" id="cover-letter-regenerate-btn" type="button">Regenerate</button>
+            <button class="btn btn-ghost" id="cover-letter-copy-btn" type="button">Copy</button>
+            <button class="btn btn-ghost" id="cover-letter-download-btn" type="button">Download .txt</button>
+            <span class="cover-letter-copy-status" id="cover-letter-copy-status" role="status" aria-live="polite"></span>
+          </div>
+          <p class="cover-letter-note">
+            AI-written from your resume and this posting. Review it before sending: check names, dates, and any claim you wouldn't make yourself.
+          </p>
+        </div>
       </div>
-      <div class="chat-input-row">
-        <input type="text" id="chat-input" class="chat-input" aria-label="Your message" placeholder="e.g. Which gap should I close first?" />
-        <button class="btn btn-primary" id="chat-send-btn">Send</button>
-      </div>
-    </div>
+    </section>
   </section>
 </main>
 
 <footer class="site-footer">
-  <span>Resume<span class="brand-accent">Max</span> — built for engineers who'd rather see the diff than guess.</span>
+  <span>ResumeMax — built for engineers who'd rather see the diff than guess.</span>
 </footer>
+
+<!-- ============ CHAT (slide-out drawer) ============ -->
+<button class="chat-launcher" id="chat-launcher" type="button" hidden>💬 Ask a follow-up</button>
+<div class="chat-scrim" id="chat-scrim" hidden></div>
+<div class="chat-panel" id="chat-panel" hidden>
+  <div class="chat-panel-head">
+    <span class="chat-panel-title" id="chat-heading">Have a question about this?</span>
+    <button class="chat-close" id="chat-close-btn" type="button" aria-label="Close chat">✕</button>
+  </div>
+  <div class="chat-messages scroll-thin" id="chat-messages" role="log" aria-live="polite" aria-label="Conversation">
+    <div class="chat-bubble chat-bubble--assistant">
+      Ask me anything about this analysis — which gap to close first, how to phrase a specific bullet, what a "readiness roadmap" item actually means, that kind of thing.
+    </div>
+  </div>
+  <div class="chat-loading" id="chat-loading" role="status" hidden>
+    <span class="spinner" aria-hidden="true"></span> thinking…
+  </div>
+  <div class="chat-input-row">
+    <input type="text" id="chat-input" class="chat-input" aria-label="Your message" placeholder="e.g. Which gap should I close first?" />
+    <button class="btn btn-primary chat-send-btn" id="chat-send-btn" aria-label="Send">→</button>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

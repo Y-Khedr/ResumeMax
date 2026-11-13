@@ -20,9 +20,11 @@ COPY frontend/ ./frontend/
 
 WORKDIR /app/backend
 
-EXPOSE 8000
+EXPOSE 7860
 
-# $PORT is set by most hosting platforms (Render, Railway, etc.) — falls
-# back to 8000 for local `docker run`.
-ENV PORT=8000
+# Render injects its own $PORT at runtime, overriding this default — so
+# changing the default here doesn't affect Render. 7860 specifically
+# matches Hugging Face Spaces' expected default container port for
+# Docker-SDK Spaces, which don't inject a $PORT the way Render does.
+ENV PORT=7860
 CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}

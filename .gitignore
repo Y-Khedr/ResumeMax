@@ -16,3 +16,6 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Node (frontend dev tests only)
+node_modules/

@@ -1,3 +1,13 @@
+---
+title: ResumeMax
+emoji: 📄
+colorFrom: indigo
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # ATS Scan — AI Resume & Skill Optimizer (Web Edition)
 
 A rebuild of the ATS Resume Optimizer as a real web app: FastAPI backend,
@@ -184,3 +194,43 @@ gazetteer phrase contains a symbol (e.g. both "CI/CD Pipelines" and "cd
 pipelines" can appear, since the slash breaks word-matching in the dedupe
 step). Cosmetic only — doesn't affect scoring — worth cleaning up later in
 `engine.py`'s `_dedupe_subphrases`.
+
+## Testing
+
+```bash
+# Backend (API + engine, Gemini mocked — no key or network needed)
+cd backend && pip install -r requirements-dev.txt && pytest tests/ -v
+
+# Frontend (optional, dev-only; the app itself needs no Node)
+cd frontend-tests && npm install && npm test
+```
+
+## How scoring works
+
+With a `GEMINI_API_KEY` set, `/api/analyze` has Gemini extract the job's concrete
+requirements and judge each against the resume (so paraphrases match and filler
+is ignored). Each claimed match must be backed by evidence that is verified
+against the resume text. Without a key, or if the call fails, it falls back to
+keyword matching and the response says so (`match_mode: "lexical"`).
+
+## Scoring and matching
+
+`POST /api/analyze` reports how the score was produced in `match_mode`:
+
+- `"ai"` — Gemini extracts the posting's concrete requirements as short skill tags and judges each
+  against the resume. Paraphrases count ("scaling design systems" matches "maintaining a scalable
+  design system"), filler ("growing team") is ignored, and a match only counts if the evidence the
+  model quotes is actually found in the resume text. Score = weighted requirement coverage
+  (required 1.0, preferred 0.5). Per-requirement detail is returned in `requirements`.
+- `"lexical"` — keyword fallback, used when no `GEMINI_API_KEY` is set or the AI call fails (the
+  response says so in `extraction_warning`). Recognized skills count fully, generic n-grams count
+  little; matching ignores case, punctuation and plural/singular. Less accurate on long prose postings.
+
+PDF text is extracted with layout preserved, so multi-column resumes keep their columns separate.
+
+## Cover letter
+
+`POST /api/cover-letter` `{resume_text, job_description, analysis_summary?, tone?}` →
+`{ok, letter, error}`. `tone` is one of `concise`, `confident`, `conversational`, `leadership`,
+`technical`. Rate limited to 10/minute. The letter is an AI draft: the UI tells the user to verify
+every claim and fill in any `[bracketed]` placeholders.

@@ -1,9 +1,26 @@
 const API_BASE = ""; // same-origin, FastAPI serves the frontend too
 
 // ---------------------------------------------------------------------------
-// Theme toggle (dark / light, persisted in localStorage)
+// Launch screen — visible for ~3s on first load, then fades out. Runs first
+// and independently of everything else below, so a failure anywhere else in
+// this file can't leave it stuck on screen. The 5s timer is a pure safety
+// net: it force-hides the screen well past the expected duration in case the
+// earlier timers somehow don't fire, so this can never block the app.
 // ---------------------------------------------------------------------------
-const THEME_KEY = "resumemax-theme";
+(function () {
+  const launchScreen = document.getElementById("launch-screen");
+  if (!launchScreen) return;
+  setTimeout(() => launchScreen.classList.add("is-exiting"), 2600);
+  setTimeout(() => { launchScreen.hidden = true; }, 3000);
+  setTimeout(() => { launchScreen.hidden = true; }, 5000);
+})();
+
+// ---------------------------------------------------------------------------
+// Theme toggle (dark / light). Dark is always the starting state on every
+// fresh load — deliberately not persisted, so a reload always resets to
+// dark regardless of what was toggled during a previous visit. The toggle
+// still works normally for the current view.
+// ---------------------------------------------------------------------------
 const themeToggleBtn = document.getElementById("theme-toggle");
 const themeToggleIcon = document.getElementById("theme-toggle-icon");
 
@@ -21,42 +38,73 @@ function currentTheme() {
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
 
-// Sync the icon with whatever the inline head script already applied
-// (that script runs before paint to avoid a flash of the wrong theme).
-applyTheme(localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark");
-
 themeToggleBtn.addEventListener("click", () => {
-  const next = currentTheme() === "light" ? "dark" : "light";
-  applyTheme(next);
-  localStorage.setItem(THEME_KEY, next);
+  applyTheme(currentTheme() === "light" ? "dark" : "light");
 });
 
 // ---------------------------------------------------------------------------
-// Hero terminal — staggered diff-line reveal on load
+// Side navigation — enables/activates jump-to-section links as each part
+// of the page actually becomes available, instead of linking to sections
+// that are still empty/hidden.
 // ---------------------------------------------------------------------------
-const HERO_LINES = [
-  { type: "ctx", text: "$ resumemax --resume resume.pdf --job posting.txt" },
-  { type: "ctx", text: "" },
-  { type: "add", text: "+ Java Spring Boot" },
-  { type: "add", text: "+ REST APIs" },
-  { type: "del", text: "- Kubernetes" },
-  { type: "del", text: "- CI/CD Pipelines" },
-  { type: "add", text: "+ PostgreSQL" },
-  { type: "ctx", text: "" },
-  { type: "ctx", text: "match: 61%   2 gaps found" },
+const sideNavLinks = document.querySelectorAll(".side-nav-link");
+
+function enableSideNavLink(id) {
+  const link = document.getElementById(id);
+  if (!link) return;
+  link.classList.remove("is-disabled");
+  link.removeAttribute("aria-disabled");
+}
+
+function setActiveSideNavLink(id) {
+  sideNavLinks.forEach((link) => link.classList.remove("is-active"));
+  const link = document.getElementById(id);
+  if (link) link.classList.add("is-active");
+}
+
+sideNavLinks.forEach((link) => {
+  link.addEventListener("click", (e) => {
+    if (link.classList.contains("is-disabled")) return; // no-op link, nothing to jump to yet
+    if (link.id === "nav-chat") {
+      // The chat panel is a fixed-position slide-out drawer, not a normal
+      // in-flow section — a native anchor jump to it does nothing useful
+      // (it's off-screen/hidden until opened). Open the drawer instead.
+      e.preventDefault();
+      openChatDrawer();
+    }
+    setActiveSideNavLink(link.id);
+  });
+});
+
+// Scroll-spy: keeps the active link in sync with whichever section is
+// actually in view, instead of only updating on click. Chat isn't included
+// here since it's a drawer, not a scrollable section — its active state is
+// set explicitly when opened/clicked above.
+const SCROLL_SPY_SECTIONS = [
+  { id: "app", navId: "nav-inputs" },
+  { id: "results-section", navId: "nav-results" },
+  { id: "recommendations-anchor", navId: "nav-recommendations" },
+  { id: "export-section", navId: "nav-export" },
+  { id: "cover-letter-section", navId: "nav-cover-letter" },
 ];
 
-function renderHero() {
-  const container = document.getElementById("hero-diff-lines");
-  HERO_LINES.forEach((line, i) => {
-    const el = document.createElement("div");
-    el.className = `diff-line diff-line--${line.type}`;
-    el.textContent = line.text || "\u00A0";
-    el.style.animationDelay = `${0.15 * i + 0.2}s`;
-    container.appendChild(el);
-  });
-}
-renderHero();
+const scrollSpyObserver = new IntersectionObserver(
+  (entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting);
+    if (visible.length === 0) return;
+    // If multiple sections are partially visible at once, prefer whichever
+    // one is closest to the top of the viewport.
+    visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    const target = SCROLL_SPY_SECTIONS.find((s) => s.id === visible[0].target.id);
+    if (target) setActiveSideNavLink(target.navId);
+  },
+  { rootMargin: "-15% 0px -70% 0px", threshold: 0 }
+);
+
+SCROLL_SPY_SECTIONS.forEach(({ id }) => {
+  const el = document.getElementById(id);
+  if (el) scrollSpyObserver.observe(el);
+});
 
 // ---------------------------------------------------------------------------
 // Resume dropzone
@@ -174,6 +222,11 @@ scanBtn.addEventListener("click", async () => {
     renderResults(data);
     resultsSection.hidden = false;
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    enableSideNavLink("nav-results");
+    enableSideNavLink("nav-export"); // export works off score/diff data alone, doesn't need AI to succeed
+    enableSideNavLink("nav-cover-letter");
+    resetCoverLetter(data.resume_text, data.job_description); // never show a letter written for a previous scan
+    setActiveSideNavLink("nav-results");
 
     fetchAISuggestions(data.resume_text, data.job_description);
   } catch (err) {
@@ -200,6 +253,12 @@ function renderResults(data) {
   const note = document.getElementById("score-note");
   note.textContent =
     data.score >= 65 ? "Solid match." : data.score >= 40 ? "Partial match — some real gaps." : "Low match — review the gaps below.";
+
+  // Header fit chip — small persistent readout once a scan has run
+  const fitChip = document.getElementById("fit-chip");
+  const fitChipText = document.getElementById("fit-chip-text");
+  fitChipText.textContent = `${Math.round(data.score)}% fit`;
+  fitChip.hidden = false;
 
   document.getElementById("matched-count").textContent = data.matched.length;
   document.getElementById("missing-count").textContent = data.missing.length;
@@ -247,11 +306,11 @@ function diffLineEl(text, type, i) {
 // output isn't streamed)
 // ---------------------------------------------------------------------------
 const AI_STATUS_MESSAGES = [
-  "Reading the job requirements…",
-  "Comparing against your resume…",
-  "Drafting bullet rewrites…",
-  "Building your readiness roadmap…",
-  "Almost there…",
+  "Working…",
+  "Scanning…",
+  "Comparing…",
+  "Reviewing…",
+  "Finishing…",
 ];
 
 async function fetchAISuggestions(resumeText, jobDescription) {
@@ -261,12 +320,14 @@ async function fetchAISuggestions(resumeText, jobDescription) {
   const statusEl = document.getElementById("ai-loading-status");
   const timeEl = document.getElementById("ai-loading-time");
   const fillEl = document.getElementById("ai-progress-fill");
+  const trackEl = document.getElementById("ai-progress-track");
 
   loading.hidden = false;
   content.hidden = true;
   errorEl.hidden = true;
   fillEl.classList.remove("is-done");
-  fillEl.style.width = "0%";
+  fillEl.style.transform = "scaleX(0)";
+  trackEl.setAttribute("aria-valuenow", "0");
 
   const startTime = performance.now();
   let statusIndex = 0;
@@ -284,14 +345,16 @@ async function fetchAISuggestions(resumeText, jobDescription) {
     // working" signal rather than a fake exact percentage. Snaps to 100%
     // only once the real response actually arrives (below).
     const pct = 90 * (1 - Math.exp(-elapsedSec / 7));
-    fillEl.style.width = `${pct.toFixed(0)}%`;
+    fillEl.style.transform = `scaleX(${(pct / 100).toFixed(3)})`;
+    trackEl.setAttribute("aria-valuenow", pct.toFixed(0));
   }, 250);
 
   function stopProgress(success) {
     clearInterval(statusInterval);
     clearInterval(progressInterval);
     if (success) {
-      fillEl.style.width = "100%";
+      fillEl.style.transform = "scaleX(1)";
+      trackEl.setAttribute("aria-valuenow", "100");
       fillEl.classList.add("is-done");
     }
   }
@@ -393,11 +456,13 @@ async function fetchAISuggestions(resumeText, jobDescription) {
 
     // Enable "apply rewrites" against this specific resume/bullet set
     lastResumeTextForApply = resumeText;
+    lastAnalysisSummary = data.summary || "";
     lastBulletRewritesForApply = data.bullet_rewrites || [];
     document.getElementById("apply-rewrites-status").textContent = "";
     document.getElementById("apply-rewrites-downloads").hidden = true;
 
     content.hidden = false;
+    enableSideNavLink("nav-recommendations");
     initChat(resumeText, jobDescription, data.summary || "");
   } catch (err) {
     stopProgress(false);
@@ -469,6 +534,9 @@ const chatMessages = document.getElementById("chat-messages");
 const chatLoading = document.getElementById("chat-loading");
 const chatInput = document.getElementById("chat-input");
 const chatSendBtn = document.getElementById("chat-send-btn");
+const chatLauncher = document.getElementById("chat-launcher");
+const chatScrim = document.getElementById("chat-scrim");
+const chatCloseBtn = document.getElementById("chat-close-btn");
 
 let chatContext = null;   // { resumeText, jobDescription, analysisSummary }
 let chatHistory = [];     // [{role, content}, ...] sent back to the server each turn
@@ -476,9 +544,35 @@ let chatHistory = [];     // [{role, content}, ...] sent back to the server each
 function initChat(resumeText, jobDescription, analysisSummary) {
   chatContext = { resumeText, jobDescription, analysisSummary };
   chatHistory = []; // fresh conversation for each new scan
-  chatHeading.hidden = false;
-  chatPanel.hidden = false;
+  chatLauncher.hidden = false;
+  enableSideNavLink("nav-chat");
 }
+
+function openChatDrawer() {
+  chatScrim.hidden = false;
+  chatPanel.hidden = false;
+  // Two ticks: `hidden` must clear (display:none -> block) before adding
+  // the class that animates the transform, or the transition won't run.
+  requestAnimationFrame(() => requestAnimationFrame(() => chatPanel.classList.add("is-open")));
+  chatLauncher.classList.add("is-hidden");
+  chatInput.focus();
+}
+
+function closeChatDrawer() {
+  chatPanel.classList.remove("is-open");
+  chatLauncher.classList.remove("is-hidden");
+  setTimeout(() => {
+    chatPanel.hidden = true;
+    chatScrim.hidden = true;
+  }, 300); // matches the CSS transition duration, so it hides only after sliding out
+}
+
+chatLauncher.addEventListener("click", openChatDrawer);
+chatCloseBtn.addEventListener("click", closeChatDrawer);
+chatScrim.addEventListener("click", closeChatDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && chatPanel.classList.contains("is-open")) closeChatDrawer();
+});
 
 function appendChatBubble(role, text) {
   const bubble = document.createElement("div");
@@ -614,3 +708,152 @@ document.getElementById("download-resume-pdf-btn").addEventListener("click", () 
 document.getElementById("download-resume-txt-btn").addEventListener("click", () =>
   downloadUpdatedResume("/api/export/resume-txt", "resumemax_updated_resume.txt")
 );
+
+
+// ---------------------------------------------------------------------------
+// Cover letter — optional step after the scan. Reuses the resume and job
+// text from the scan, so there is nothing to re-enter.
+// ---------------------------------------------------------------------------
+const coverLetterReady = document.getElementById("cover-letter-ready");
+const coverLetterLoading = document.getElementById("cover-letter-loading");
+const coverLetterError = document.getElementById("cover-letter-error");
+const coverLetterResult = document.getElementById("cover-letter-result");
+const coverLetterTextarea = document.getElementById("cover-letter-textarea");
+const coverLetterStatus = document.getElementById("cover-letter-status");
+const coverLetterCopyStatus = document.getElementById("cover-letter-copy-status");
+const coverLetterGenerateBtn = document.getElementById("cover-letter-generate-btn");
+const coverLetterRegenerateBtn = document.getElementById("cover-letter-regenerate-btn");
+const coverLetterCopyBtn = document.getElementById("cover-letter-copy-btn");
+const coverLetterDownloadBtn = document.getElementById("cover-letter-download-btn");
+const toneChips = document.querySelectorAll(".tone-chip");
+
+let lastAnalysisResumeText = null;
+let lastAnalysisJobDescription = null;
+let lastAnalysisSummary = "";
+let coverLetterTone = null;        // currently applied tone key, or null
+let lastGeneratedLetter = "";      // what the model last returned, to detect user edits
+let coverLetterRequestId = 0;      // lets us ignore a response that arrives after a newer scan/request
+
+function setCoverLetterBusy(busy) {
+  coverLetterGenerateBtn.disabled = busy;
+  coverLetterRegenerateBtn.disabled = busy;
+  toneChips.forEach((chip) => { chip.disabled = busy; });
+}
+
+function resetCoverLetter(resumeText, jobDescription) {
+  coverLetterRequestId++; // invalidates any request still in flight for the previous scan
+  lastAnalysisResumeText = resumeText;
+  lastAnalysisJobDescription = jobDescription;
+  lastAnalysisSummary = "";
+  coverLetterTone = null;
+  lastGeneratedLetter = "";
+  coverLetterTextarea.value = "";
+  toneChips.forEach((chip) => chip.classList.remove("is-active"));
+  coverLetterResult.hidden = true;
+  coverLetterLoading.hidden = true;
+  coverLetterError.hidden = true;
+  coverLetterReady.hidden = false;
+  coverLetterStatus.textContent = "optional";
+  setCoverLetterBusy(false);
+}
+
+function userHasEditedLetter() {
+  return lastGeneratedLetter !== "" && coverLetterTextarea.value !== lastGeneratedLetter;
+}
+
+async function generateCoverLetter(tone) {
+  if (!lastAnalysisResumeText || !lastAnalysisJobDescription) return;
+
+  // Don't silently throw away text the user has been editing.
+  if (userHasEditedLetter() &&
+      !window.confirm("Regenerating will replace your edits to the letter. Continue?")) {
+    return;
+  }
+
+  const requestId = ++coverLetterRequestId;
+  coverLetterTone = tone;
+  toneChips.forEach((chip) => chip.classList.toggle("is-active", chip.dataset.tone === tone));
+
+  coverLetterError.hidden = true;
+  coverLetterReady.hidden = true;
+  coverLetterResult.hidden = true;
+  coverLetterLoading.hidden = false;
+  coverLetterStatus.textContent = "writing";
+  setCoverLetterBusy(true);
+
+  const showError = (message) => {
+    coverLetterLoading.hidden = true;
+    coverLetterError.textContent = message;
+    coverLetterError.hidden = false;
+    // keep whatever letter they already had visible; otherwise offer the button again
+    if (lastGeneratedLetter) coverLetterResult.hidden = false;
+    else coverLetterReady.hidden = false;
+    coverLetterStatus.textContent = lastGeneratedLetter ? "generated" : "optional";
+    setCoverLetterBusy(false);
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/api/cover-letter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resume_text: lastAnalysisResumeText,
+        job_description: lastAnalysisJobDescription,
+        analysis_summary: lastAnalysisSummary,
+        tone: tone,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (requestId !== coverLetterRequestId) return; // a newer scan/request superseded this one
+
+    if (!res.ok || !data.ok) {
+      showError(data.error || "Couldn't write the cover letter. Try again.");
+      return;
+    }
+    lastGeneratedLetter = data.letter;
+    coverLetterTextarea.value = data.letter;
+    coverLetterLoading.hidden = true;
+    coverLetterResult.hidden = false;
+    coverLetterStatus.textContent = "generated";
+    setCoverLetterBusy(false);
+  } catch (err) {
+    if (requestId !== coverLetterRequestId) return;
+    showError("Couldn't reach the cover letter service.");
+  }
+}
+
+coverLetterGenerateBtn.addEventListener("click", () => generateCoverLetter(null));
+coverLetterRegenerateBtn.addEventListener("click", () => generateCoverLetter(coverLetterTone));
+toneChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    // clicking the active tone again clears it
+    generateCoverLetter(coverLetterTone === chip.dataset.tone ? null : chip.dataset.tone);
+  });
+});
+
+coverLetterCopyBtn.addEventListener("click", async () => {
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(coverLetterTextarea.value);
+    copied = true;
+  } catch (_) {
+    // clipboard API needs a secure context; fall back to the older route
+    try {
+      coverLetterTextarea.select();
+      copied = document.execCommand("copy");
+    } catch (__) { /* fall through */ }
+  }
+  coverLetterCopyStatus.textContent = copied ? "Copied." : "Couldn't copy. Select the text and copy it manually.";
+  setTimeout(() => { coverLetterCopyStatus.textContent = ""; }, 2500);
+});
+
+coverLetterDownloadBtn.addEventListener("click", () => {
+  // Honest label: this is plain text, so the button says .txt, not PDF.
+  const blob = new Blob([coverLetterTextarea.value], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "cover_letter.txt";
+  a.click();
+  URL.revokeObjectURL(url);
+});

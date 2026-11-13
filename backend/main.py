@@ -18,6 +18,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -105,6 +106,13 @@ MAX_PROMPT_CHARS = 4000  # must match the truncation length used in engine.py's 
 # Schemas
 # ---------------------------------------------------------------------------
 
+class RequirementOut(BaseModel):
+    skill: str
+    importance: str
+    found: bool
+    evidence: str = ""
+
+
 class AnalyzeResponse(BaseModel):
     score: float
     matched: list[str]
@@ -116,6 +124,10 @@ class AnalyzeResponse(BaseModel):
     job_description: str
     resume_truncated: bool = False
     job_description_truncated: bool = False
+    # "ai" = requirements extracted and judged by Gemini; "lexical" = the
+    # keyword fallback. Exposed so the score can be interpreted honestly.
+    match_mode: str = "lexical"
+    requirements: list[RequirementOut] = []
 
 
 class AISuggestRequest(BaseModel):
@@ -187,6 +199,32 @@ def health():
     }
 
 
+# Cache of successful AI requirement matches, keyed by (resume, job posting).
+# Re-running the same scan (double-click, retry) shouldn't pay for another
+# model call, and failures are never cached so a transient error can't stick.
+_match_cache: dict = {}
+_MATCH_CACHE_MAX = 200
+
+
+def _cached_ai_match(resume_text: str, job_description: str):
+    """Returns a RequirementMatchResult, or None when AI matching isn't configured."""
+    if not (os.getenv("GEMINI_API_KEY") and engine.GENAI_AVAILABLE):
+        return None
+    key = hashlib.sha256(f"match::{resume_text}::{job_description}".encode("utf-8")).hexdigest()
+    if key in _match_cache:
+        return _match_cache[key]
+    try:
+        result = engine.match_requirements_with_ai(resume_text, job_description)
+    except Exception:
+        logger.exception("Unexpected error in AI requirement matching")
+        return None
+    if result.ok:
+        if len(_match_cache) >= _MATCH_CACHE_MAX:
+            _match_cache.pop(next(iter(_match_cache)))
+        _match_cache[key] = result
+    return result
+
+
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 @limiter.limit("15/minute")
 async def analyze(
@@ -221,13 +259,47 @@ async def analyze(
     if not raw.startswith(b"%PDF"):
         raise HTTPException(415, "This file doesn't look like a valid PDF.")
 
-    extraction = engine.extract_text_from_pdf(io.BytesIO(raw), ocr_fallback=ocr_fallback)
+    # Extraction is CPU-bound (and can include OCR) — keep it off the event loop.
+    extraction = await run_in_threadpool(
+        engine.extract_text_from_pdf, io.BytesIO(raw), ocr_fallback
+    )
 
     if not extraction.text:
         raise HTTPException(422, extraction.warning or "No text could be extracted from this PDF.")
 
-    job_phrases, matched, missing = engine.diff_phrases(extraction.text, job_description)
-    score = engine.calculate_weighted_score(extraction.text, job_description, matched, job_phrases)
+    # Preferred path: have the model extract the posting's real requirements
+    # and judge each against the resume (handles paraphrase, ignores filler).
+    # Falls back to the keyword matcher if there's no key or the call fails,
+    # and says so in the response rather than silently returning a weaker score.
+    match_mode = "lexical"
+    requirements_out: list[RequirementOut] = []
+    fallback_note: Optional[str] = None
+
+    ai_match = await run_in_threadpool(_cached_ai_match, extraction.text, job_description)
+    if ai_match is not None and ai_match.ok:
+        match_mode = "ai"
+        reqs = ai_match.requirements
+        matched = [r.skill for r in reqs if r.found]
+        missing = [r.skill for r in reqs if not r.found]
+        job_phrases = [r.skill for r in reqs]
+        score = engine.score_from_requirements(reqs)
+        requirements_out = [
+            RequirementOut(skill=r.skill, importance=r.importance, found=r.found, evidence=r.evidence)
+            for r in reqs
+        ]
+    else:
+        job_phrases, matched, missing = engine.diff_phrases(extraction.text, job_description)
+        score = engine.calculate_weighted_score(extraction.text, job_description, matched, job_phrases)
+        fallback_note = (
+            "AI skill matching was unavailable, so this score uses keyword matching "
+            "and may be less accurate on long job postings."
+        )
+        if ai_match is not None and ai_match.error:
+            logger.warning("AI requirement matching failed, using keyword fallback: %s", ai_match.error)
+
+    warning = extraction.warning
+    if fallback_note:
+        warning = f"{warning} {fallback_note}" if warning else fallback_note
 
     return AnalyzeResponse(
         score=score,
@@ -235,7 +307,9 @@ async def analyze(
         missing=missing,
         job_phrases=job_phrases,
         extraction_method=extraction.method,
-        extraction_warning=extraction.warning,
+        extraction_warning=warning,
+        match_mode=match_mode,
+        requirements=requirements_out,
         resume_text=extraction.text,
         job_description=job_description,
         resume_truncated=len(extraction.text) > MAX_PROMPT_CHARS,
@@ -375,6 +449,36 @@ def chat(request: Request, req: ChatRequest):
         return ChatResponse(ok=False, error="Something went wrong. Try again.")
 
     return ChatResponse(ok=result.ok, reply=result.reply, error=result.error)
+
+
+class CoverLetterRequest(BaseModel):
+    resume_text: str = Field(..., min_length=1, max_length=50_000)
+    job_description: str = Field(..., min_length=1, max_length=50_000)
+    analysis_summary: str = Field("", max_length=5_000)
+    tone: Optional[str] = Field(None, max_length=32)
+
+
+class CoverLetterResponse(BaseModel):
+    ok: bool
+    letter: str = ""
+    error: Optional[str] = None
+
+
+@app.post("/api/cover-letter", response_model=CoverLetterResponse)
+@limiter.limit("10/minute")
+def cover_letter(request: Request, req: CoverLetterRequest):
+    try:
+        result = engine.generate_cover_letter(
+            resume_text=req.resume_text,
+            job_description=req.job_description,
+            analysis_summary=req.analysis_summary,
+            tone=req.tone,
+        )
+    except Exception:
+        logger.exception("Unexpected error in /api/cover-letter")
+        return CoverLetterResponse(ok=False, error="Something went wrong writing the cover letter. Try again.")
+
+    return CoverLetterResponse(ok=result.ok, letter=result.letter, error=result.error)
 
 
 @app.post("/api/export/markdown")
