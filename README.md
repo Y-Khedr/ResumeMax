@@ -32,7 +32,7 @@ than a Streamlit demo.
 ats_web/
 ├── Dockerfile
 ├── .dockerignore
-├── .gitignore              # excludes .env and venv/ — do not remove
+├── .gitignore              # excludes .env and venv
 ├── .github/workflows/tests.yml  # CI: runs pytest on every push
 ├── backend/
 │   ├── main.py             # FastAPI app + API endpoints
